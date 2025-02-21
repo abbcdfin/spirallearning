@@ -7,6 +7,14 @@ import argparse
 import copy
 from urllib.parse import urlparse
 import hashlib
+import subprocess
+
+def get_path_with_two_levels_of_parents(file_path):
+    parent_dir = os.path.dirname(file_path)
+    grandparent_dir = os.path.dirname(parent_dir)
+    return os.path.join(
+        os.path.basename(grandparent_dir), os.path.basename(parent_dir),
+        os.path.basename(file_path))
 
 def generate_id_from_filename(filename):
     """Generates a unique ID from the given filename using a hash algorithm."""
@@ -39,10 +47,9 @@ def convert_markdown_image_tag(text, file_id):
     converted_text = re.sub(pattern, replacement, text)
     return converted_text
 
-def parse_markdown(input_file, output_dir):
+def parse_markdown(input_file, output_dir, file_id):
     questions = []
     current_question = {}
-    file_id = generate_id_from_filename(input_file)
 
     media_dir = os.path.join(output_dir, 'media')
     os.makedirs(media_dir, exist_ok=True)
@@ -73,6 +80,16 @@ def parse_markdown(input_file, output_dir):
 
     return questions
 
+def handle_image_reference(body):
+    def replace_image_reference(match):
+        img_src = match.group(1)
+        img_filename = os.path.basename(img_src)
+        new_img_src = get_path_with_two_levels_of_parents(img_src)
+        return f'<img src="{new_img_src}">'
+
+    body = re.sub(r'!\[\]\((.*?)\)\{.*?\}', replace_image_reference, body)
+    return body
+
 def handle_images(body, output_dir):
     media_dir = os.path.join(output_dir, 'media')
     os.makedirs(media_dir, exist_ok=True)
@@ -101,13 +118,34 @@ def handle_images(body, output_dir):
     body = re.sub(r'!\[.*?\]\((.*?)\)', replace_image, body)
     return body
 
+def convert_docx_to_markdown(docx_file, output_dir, file_id):
+    media_directory = os.path.join(output_dir, 'media', file_id)
+    os.makedirs(media_directory, exist_ok=True)
+
+    markdown_directory = os.path.join(output_dir, 'markdown')
+    os.makedirs(markdown_directory, exist_ok=True)
+
+    md_filename = os.path.join(
+        markdown_directory,
+        os.path.basename(docx_file).replace('.docx', '.md'))
+    command = [
+        'pandoc', docx_file, '-f', 'docx', '-t', 'markdown', 
+        f'--extract-media={media_directory}',
+        '-o', md_filename,
+        ]
+    try:
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error converting {docx_file} to markdown: {e}")
+    return md_filename
+
 def generate_anki_file(questions, output_file, output_dir):
     with open(output_file, 'w') as file:
         file.write('Front;Back\n')
         for question in questions:
             title = question['title']
             body = '<br>'.join(question['body'])
-            body = handle_images(body, output_dir)
+            body = handle_image_reference(body)
             file.write(f'\"{title}<br>{body}\n\n\"\n')
 
 if __name__ == "__main__":
@@ -129,9 +167,17 @@ if __name__ == "__main__":
     all_questions = []
     
     for filename in os.listdir(input_dir):
+        file_id = generate_id_from_filename(filename)
+
         if filename.endswith('.md'):
             input_file = os.path.join(input_dir, filename)
-            questions = parse_markdown(input_file, output_dir)
+            questions = parse_markdown(input_file, output_dir, file_id)
+            all_questions.extend(questions)
+        elif filename.endswith('.docx'):
+            docx_file = os.path.join(input_dir, filename)
+            markdown_file = convert_docx_to_markdown(
+                docx_file, output_dir, file_id)
+            questions = parse_markdown(markdown_file, output_dir, file_id)
             all_questions.extend(questions)
     
     output_file = os.path.join(output_dir, 'combined_deck.txt')
