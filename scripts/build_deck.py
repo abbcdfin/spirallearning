@@ -40,14 +40,44 @@ def escape_quotes(text):
     """Escapes double quotes in the given text."""
     return text.replace('"', '""')
 
-def convert_markdown_image_tag(text, file_id):
+def convert_markdown_image_tag(text):
     """Converts markdown image tags like '![][image_name]' to HTML <img> tags."""
-    pattern = r'!\[\]\[(.*?)]'
-    replacement = lambda match: f'<img src="{match.group(1)}-{file_id}.png">'
-    converted_text = re.sub(pattern, replacement, text)
+    pattern = r'!\[\]\((.*?)\){.*?}'
+    replacement = lambda match: f'<img src="{match.group(1)}">'
+    converted_text = re.sub(pattern, replacement, text, flags=re.DOTALL)
     return converted_text
 
-def parse_markdown(input_file, output_dir, file_id):
+def parse_markdown_with_re(input_file, output_dir, file_id):
+    questions = []
+    current_question = {}
+
+    media_dir = os.path.join(output_dir, 'media')
+    os.makedirs(media_dir, exist_ok=True)
+
+    category=os.path.basename(input_file).replace('.md', '').split('-')[1].strip()
+    current_question['category'] = category.replace(' ', '_')
+
+    with open(input_file, 'r') as file:
+        content = file.read()
+
+    content = handle_image_reference(content)
+
+    question_pattern = re.compile(
+        r'\[(.+?)\]\{\.comment-start.*?\}(.*?)\[\]\{\.comment-end.*?\}(.*?)(?=\[.+\]\{\.comment-start.*?\}|\Z)', 
+        re.DOTALL
+    )
+
+    matches = question_pattern.findall(content)
+    for match in matches:
+        current_question['answer'] = escape_quotes(match[0])
+        current_question['title'] = unescape_brackets(match[1])
+        current_question['body'] = escape_quotes(match[2])
+        questions.append(copy.deepcopy(current_question))
+        continue
+
+    return questions
+ 
+def parse_markdown_old_school(input_file, output_dir, file_id):
     questions = []
     current_question = {}
 
@@ -83,11 +113,11 @@ def parse_markdown(input_file, output_dir, file_id):
 def handle_image_reference(body):
     def replace_image_reference(match):
         img_src = match.group(1)
-        img_filename = os.path.basename(img_src)
         new_img_src = get_path_with_two_levels_of_parents(img_src)
         return f'<img src="{new_img_src}">'
 
-    body = re.sub(r'!\[\]\((.*?)\)\{.*?\}', replace_image_reference, body)
+    pattern = r'!\[\]\((.*?)\){.*?}'
+    body = re.sub(pattern, replace_image_reference, body, flags=re.DOTALL)
     return body
 
 def handle_images(body, output_dir):
@@ -129,7 +159,8 @@ def convert_docx_to_markdown(docx_file, output_dir, file_id):
         markdown_directory,
         os.path.basename(docx_file).replace('.docx', '.md'))
     command = [
-        'pandoc', docx_file, '-f', 'docx', '-t', 'markdown', 
+        'pandoc', docx_file, '-f', 'docx', '-t', 'markdown',
+        '--track-changes=all', 
         f'--extract-media={media_directory}',
         '-o', md_filename,
         ]
@@ -141,12 +172,13 @@ def convert_docx_to_markdown(docx_file, output_dir, file_id):
 
 def generate_anki_file(questions, output_file, output_dir):
     with open(output_file, 'w') as file:
-        file.write('Front;Back\n')
+        file.write('question;answer;tag\n')
         for question in questions:
+            category = question['category']
+            answer = question['answer']
             title = question['title']
-            body = '<br>'.join(question['body'])
-            body = handle_image_reference(body)
-            file.write(f'\"{title}<br>{body}\n\n\"\n')
+            body = question['body']
+            file.write(f'\"{title}<br>{body}\";\"{answer}\";\"{category}\"\n\n')
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Convert Google Doc exported Markdown files into AnkiWeb-compatible decks.')
@@ -165,7 +197,7 @@ if __name__ == "__main__":
     os.makedirs(output_dir, exist_ok=True)
     
     all_questions = []
-    
+    parse_markdown = parse_markdown_with_re
     for filename in os.listdir(input_dir):
         file_id = generate_id_from_filename(filename)
 
