@@ -31,10 +31,17 @@ def write_markdown_datablocks_to_file(datablock_match, file_id, output_dir):
     with open(datablock_path, 'wb') as datablock_file:
         datablock_file.write(datablock_bytes)
 
-def unescape_brackets(text):
+def unescape_specials(text):
     """Unescapes square brackets in the given text."""
     unescaped = text.replace(r'\[', r'[').replace(r'\]', r']')
+    unescaped = unescaped.replace(r'\"', r'"')
+    unescaped = unescaped.replace(r'\'', r"'")
+    unescaped = unescaped.replace(r'\|', r"|")
+
     return unescaped
+
+def update_linebreaks(text):
+    return text.replace('\n', '<br>')
 
 def escape_quotes(text):
     """Escapes double quotes in the given text."""
@@ -70,8 +77,8 @@ def parse_markdown_with_re(input_file, output_dir, file_id):
     matches = question_pattern.findall(content)
     for match in matches:
         current_question['answer'] = escape_quotes(match[0])
-        current_question['title'] = unescape_brackets(match[1])
-        current_question['body'] = escape_quotes(match[2])
+        current_question['title'] = unescape_specials(match[1])
+        current_question['body'] = update_linebreaks(unescape_specials(escape_quotes(match[2])))
         questions.append(copy.deepcopy(current_question))
         continue
 
@@ -182,7 +189,7 @@ def generate_anki_file(questions, output_file, output_dir):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Convert Google Doc exported Markdown files into AnkiWeb-compatible decks.')
-    parser.add_argument('input_directory', type=str, nargs='?', default='./resources', help='Path to the directory containing Markdown files')
+    parser.add_argument('input_directory', type=str, nargs='?', default='./resources/mathematics/', help='Path to the directory containing Markdown files')
     parser.add_argument('output_directory', type=str, nargs='?', default='/tmp/anki', help='Path to the desired output directory for the generated Anki deck .txt files')
     
     args = parser.parse_args()
